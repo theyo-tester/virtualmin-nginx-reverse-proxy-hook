@@ -1,5 +1,10 @@
 # Nginx Config Generator
 Virtualmin hook to set Nginx config when creating/editing/deleting a virtualserver.
+## What is new in this fork:
+- Adapted and tested to work on Virtualmin version 8.2.0 GPL & Debian v12
+- Major refactoring and logging option in hook
+- It ensures that the Nginx log directory exists
+- Detection whether the force SSL-Redirect is enabled and apply it to nginx config files to (if you want to change this setting afterwards and apply it to nginx, change something in "Edit Virtual Server"-Page. For instance the Description-field)
 
 ## Requirements
 It only work with virtualservers created after installed a version of webmin-virtual-server >= 6.01.gpl-3.

@@ -1,36 +1,32 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 #######################################################################
-# Nginx Config Generator is a virtualmin hook to set Nginx config
-# when creating/editing/deleting a virtualserver.
-
-# Copyright (C) 2017 Marc Sanchez Fauste
-# Copyright (C) 2017 Adrian Gibanel
-# Copyright (C) 2017 BTACTIC, SCCL
-
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# Nginx Reverse Proxy Config Generator for Virtualmin Hook
 #######################################################################
 
-#set -x
-#set -v
+# Toggle debug logging: 1 = enabled (logs to file), 0 = silent (outputs to /dev/null)
+ENABLE_LOGGING=0
+LOG_FILE="/var/log/virtualmin-nginx-hook-debug.log"
 
+if [ "${ENABLE_LOGGING}" = "1" ] || [ "${ENABLE_LOGGING}" = "true" ]; then
+    exec >> "${LOG_FILE}" 2>&1
+else
+    exec > /dev/null 2>&1
+fi
+
+echo "======================================================================="
+echo "=== Hook called at $(date) ==="
+echo "======================================================================="
+
+# Log incoming Virtualmin context
+echo "[INFO] Action: '${VIRTUALSERVER_ACTION}'"
+echo "[INFO] Domain: '${VIRTUALSERVER_DOM}' (User: '${VIRTUALSERVER_USER}')"
+echo "[INFO] SSL Enabled: '${VIRTUALSERVER_SSL}'"
+
+# Directories and paths
 NGINX_CONF_TEMPLATE_DIR="/usr/local/etc/nginx-templates"
 NGINX_CONF_TEMPLATE="default"
-NGINX_SSL_CONF_TEMPLATE_FILE="plantilla-nginx-ssl.conf"
-NGINX_NON_SSL_CONF_TEMPLATE_FILE="plantilla-nginx.conf"
 
-# Nginx logrotate
 NGINX_LOGS_FOLDER="/var/log/virtualmin/nginx"
 NGINX_LOGROTATE_CONFIG_FOLDER="/etc/logrotate.d"
 
@@ -38,210 +34,223 @@ NGINX_LOGROTATE_TEMPLATE_DIR="/usr/local/etc/nginx-logrotate-templates"
 NGINX_LOGROTATE_TEMPLATE="default"
 NGINX_LOGROTATE_TEMPLATE_FILE_NAME="logrotate-nginx.conf"
 
-# Check if nginx logrotate template is specified on virtualserver description
-LOGROTATE_TEMPLATE=$(echo "$VIRTUALSERVER_OWNER" \
-        | grep -Po "(?<=\[nginx-logrotate-template )(\w|-)+(?=\])")
-if [ ! -z "${LOGROTATE_TEMPLATE}" ]; then
-    if [ -d ${NGINX_LOGROTATE_TEMPLATE_DIR}/${LOGROTATE_TEMPLATE} ]; then
-        NGINX_LOGROTATE_TEMPLATE=${LOGROTATE_TEMPLATE}
-    fi
-fi
-NGINX_LOGROTATE_TEMPLATE_FILE="${NGINX_LOGROTATE_TEMPLATE_DIR}\
-/${NGINX_LOGROTATE_TEMPLATE}\
-/${NGINX_LOGROTATE_TEMPLATE_FILE_NAME}"
-
-NGINX_LOGROTATE_CONFIG_FILE_NON_SSL="${NGINX_LOGROTATE_CONFIG_FOLDER}\
-/${VIRTUALSERVER_DOM}.nginx.conf"
-NGINX_LOGROTATE_CONFIG_FILE_SSL="${NGINX_LOGROTATE_CONFIG_FOLDER}\
-/${VIRTUALSERVER_DOM}.ssl.nginx.conf"
-
-### NGINX CONF DEFAULT VARIABLES - BEGIN
-
-REPL_SSL_PROTOCOLS="TLSv1 TLSv1.1 TLSv1.2"
-REPL_SSL_CIPHERS="!SSLv2:!MD5:HIGH"
-
-### NGINX CONF DEFAULT VARIABLES - END
-
 NGINX_SITES_AVAILABLE_DIRECTORY="/etc/nginx/sites-available"
 NGINX_SITES_ENABLED_DIRECTORY="/etc/nginx/sites-enabled"
 
-# Check if nginx template is specified on virtualserver description
-TEMPLATE=$(echo "$VIRTUALSERVER_OWNER" | grep -Po "(?<=\[nginx-template )(\w|-)+(?=\])")
-if [ ! -z "${TEMPLATE}" ]; then
-    if [ -d ${NGINX_CONF_TEMPLATE_DIR}/${TEMPLATE} ]; then
-        NGINX_CONF_TEMPLATE=${TEMPLATE}
-    fi
+# Ensure Nginx log directory exists
+mkdir -p "${NGINX_LOGS_FOLDER}"
+
+# Dynamic public ports from Virtualmin environment
+REPL_PUBLIC_NON_SSL_PORT="${VIRTUALSERVER_WEB_URLPORT:-80}"
+REPL_PUBLIC_SSL_PORT="${VIRTUALSERVER_WEB_URLSSLPORT:-443}"
+
+echo "[INFO] Public Ports -> Non-SSL: ${REPL_PUBLIC_NON_SSL_PORT}, SSL: ${REPL_PUBLIC_SSL_PORT}"
+
+# Check for custom template directives in server description or comment
+TEMPLATE_MATCH=$(echo "$VIRTUALSERVER_DESCRIPTION $VIRTUALSERVER_COMMENT" | grep -Po "(?<=\[nginx-template )(\w|-)+(?=\])")
+if [ -n "${TEMPLATE_MATCH}" ] && [ -d "${NGINX_CONF_TEMPLATE_DIR}/${TEMPLATE_MATCH}" ]; then
+    NGINX_CONF_TEMPLATE="${TEMPLATE_MATCH}"
+    echo "[INFO] Custom template directory set to: '${NGINX_CONF_TEMPLATE}'"
 fi
 
-NGINX_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_SSL_CONF_TEMPLATE_FILE}"
-NGINX_NON_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_NON_SSL_CONF_TEMPLATE_FILE}"
+LOGROTATE_TEMPLATE_MATCH=$(echo "$VIRTUALSERVER_DESCRIPTION $VIRTUALSERVER_COMMENT" | grep -Po "(?<=\[nginx-logrotate-template )(\w|-)+(?=\])")
+if [ -n "${LOGROTATE_TEMPLATE_MATCH}" ] && [ -d "${NGINX_LOGROTATE_TEMPLATE_DIR}/${LOGROTATE_TEMPLATE_MATCH}" ]; then
+    NGINX_LOGROTATE_TEMPLATE="${LOGROTATE_TEMPLATE_MATCH}"
+    echo "[INFO] Custom logrotate template directory set to: '${NGINX_LOGROTATE_TEMPLATE}'"
+fi
 
-# Check if virtual server is an alias
-if [ ! -z "${VIRTUALSERVER_PARENT}" ] && [ ${VIRTUALSERVER_ALIAS_MODE} -eq 1 ]; then
+# Define template paths
+NGINX_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/plantilla-nginx-ssl.conf"
+NGINX_NON_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/plantilla-nginx.conf"
+NGINX_NON_SSL_REDIRECT_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/plantilla-nginx-redirect.conf"
+NGINX_LOGROTATE_TEMPLATE_FILE="${NGINX_LOGROTATE_TEMPLATE_DIR}/${NGINX_LOGROTATE_TEMPLATE}/${NGINX_LOGROTATE_TEMPLATE_FILE_NAME}"
+
+# Detect if virtual server is an alias domain
+if [ -n "${VIRTUALSERVER_PARENT}" ] && [ "${VIRTUALSERVER_ALIAS_MODE}" = "1" ]; then
     IS_ALIAS="YES"
 else
     IS_ALIAS="NO"
 fi
 
-### NGINX CONF THIS MACHINE VARIABLES - BEGIN
+# Set IP and Apache backend port defaults
+REPL_PUBLIC_NON_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_APACHE_NON_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_APACHE_NON_SSL_PORT="${VIRTUALSERVER_WEB_PORT:-8080}"
 
-REPL_PUBLIC_NON_SSL_PORT="80"
-REPL_PUBLIC_SSL_PORT="443"
+REPL_PUBLIC_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_APACHE_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_APACHE_SSL_PORT="${VIRTUALSERVER_WEB_SSLPORT:-8443}"
 
-if [ "$IS_ALIAS" = "YES" ]; then
-    REPL_PUBLIC_NON_SSL_IP="${PARENT_VIRTUALSERVER_IP}"
-    REPL_APACHE_NON_SSL_IP="${PARENT_VIRTUALSERVER_IP}"
-    REPL_APACHE_NON_SSL_PORT="${PARENT_VIRTUALSERVER_WEB_PORT}"
-
-    REPL_PUBLIC_SSL_IP="${PARENT_VIRTUALSERVER_IP}"
-    REPL_APACHE_SSL_IP="${PARENT_VIRTUALSERVER_IP}"
-    REPL_APACHE_SSL_PORT="${PARENT_VIRTUALSERVER_WEB_SSLPORT}"
+# Determine web root directory safely with fallback
+if [ -n "${VIRTUALSERVER_PUBLIC_HTML_PATH}" ]; then
+    ndomain_web_root_path="${VIRTUALSERVER_PUBLIC_HTML_PATH}"
+elif [ -n "${VIRTUALSERVER_HOME}" ]; then
+    ndomain_web_root_path="${VIRTUALSERVER_HOME}/public_html"
 else
-    REPL_PUBLIC_NON_SSL_IP="${VIRTUALSERVER_IP}"
-    REPL_APACHE_NON_SSL_IP="${VIRTUALSERVER_IP}"
-    REPL_APACHE_NON_SSL_PORT="${VIRTUALSERVER_WEB_PORT}"
-
-    REPL_PUBLIC_SSL_IP="${VIRTUALSERVER_IP}"
-    REPL_APACHE_SSL_IP="${VIRTUALSERVER_IP}"
-    REPL_APACHE_SSL_PORT="${VIRTUALSERVER_WEB_SSLPORT}"
+    ndomain_web_root_path="/home/${VIRTUALSERVER_USER}/public_html"
 fi
 
-### NGINX CONF THIS MACHINE VARIABLES - END
-
-# Check if SSL is enabled
-if [ "$IS_ALIAS" = "YES" ]; then
-    if [ $PARENT_VIRTUALSERVER_SSL -eq 1 ]; then
-        IS_SSL="YES"
-    else
-        IS_SSL="NO"
-    fi
+# SSL detection
+if [ "${VIRTUALSERVER_SSL}" = "1" ]; then
+    IS_SSL="YES"
 else
-    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
-        IS_SSL="YES"
-    else
-        IS_SSL="NO"
+    IS_SSL="NO"
+fi
+
+# Detect SSL Redirect status by scanning Apache vhost config / .htaccess
+# Locate Apache VirtualHost config file for the domain
+APACHE_CONF=""
+if [ -f "/etc/apache2/sites-available/${VIRTUALSERVER_DOM}.conf" ]; then
+    APACHE_CONF="/etc/apache2/sites-available/${VIRTUALSERVER_DOM}.conf"
+elif [ -f "/etc/httpd/conf.d/${VIRTUALSERVER_DOM}.conf" ]; then
+    APACHE_CONF="/etc/httpd/conf.d/${VIRTUALSERVER_DOM}.conf"
+fi
+
+IS_REDIRECT="NO"
+# 1. Check Apache VirtualHost config for HTTPS rewrite/redirect rules
+if [ -n "${APACHE_CONF}" ] && [ -f "${APACHE_CONF}" ]; then
+    if grep -qiE "(RewriteRule.*https://|Redirect.*https://)" "${APACHE_CONF}"; then
+        IS_REDIRECT="YES"
+    fi
+fi
+# 2. Fallback check inside public_html/.htaccess if present
+if [ "${IS_REDIRECT}" = "NO" ] && [ -f "${ndomain_web_root_path}/.htaccess" ]; then
+    if grep -qiE "(RewriteRule.*https://|Redirect.*https://)" "${ndomain_web_root_path}/.htaccess"; then
+        IS_REDIRECT="YES"
     fi
 fi
 
-# Configure nginx logs
+echo "[INFO] SSL Enabled: ${IS_SSL} | SSL Redirect Active in Apache: ${IS_REDIRECT}"
+
+# Resolve SSL Certificate paths safely with fallbacks
+ndomain_ssl_key="${VIRTUALSERVER_SSL_KEY:-${VIRTUALSERVER_HOME}/ssl.key}"
+ndomain_nginx_chained_ssl_crt="${VIRTUALSERVER_SSL_COMBINED:-${VIRTUALSERVER_SSL_CERT:-${VIRTUALSERVER_HOME}/ssl.cert}}"
+
+# Log files definition
 NGINX_ACCESS_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_access_log"
 NGINX_ERROR_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_error_log"
 
 #
-# Create the nginx conf entry upon creating or modifying a domain
+# ACTION: CREATE_DOMAIN or MODIFY_DOMAIN
 #
 if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = "MODIFY_DOMAIN" ]; then
 
+    echo "[INFO] Processing ${VIRTUALSERVER_ACTION} for ${VIRTUALSERVER_DOM}..."
     ndomain_alias_string="${VIRTUALSERVER_DOM} www.${VIRTUALSERVER_DOM}"
 
-    # Virtual server is an alias? Then use PARENT variables
-    if [ "$IS_ALIAS" = "YES" ]; then
-        ndomain_web_root_path=${PARENT_VIRTUALSERVER_PUBLIC_HTML_PATH};
+    # Select HTTP template based on SSL status & Apache redirect rule presence
+    if [ "$IS_SSL" = "YES" ] && [ "$IS_REDIRECT" = "YES" ]; then
+        SELECTED_HTTP_TEMPLATE="${NGINX_NON_SSL_REDIRECT_TEMPLATE}"
+        echo "[INFO] Selected HTTP Template (REDIRECT): '${SELECTED_HTTP_TEMPLATE}'"
     else
-        # Otherwise it is a parent server or a sub-server
-        ndomain_web_root_path=${VIRTUALSERVER_PUBLIC_HTML_PATH};
+        SELECTED_HTTP_TEMPLATE="${NGINX_NON_SSL_CONF_TEMPLATE}"
+        echo "[INFO] Selected HTTP Template (PROXY): '${SELECTED_HTTP_TEMPLATE}'"
     fi
 
-    sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
-          -e 's/''@PUBLIC_NON_SSL_IP@''/'"${REPL_PUBLIC_NON_SSL_IP}"'/g' \
-          -e 's/''@PUBLIC_NON_SSL_PORT@''/'"${REPL_PUBLIC_NON_SSL_PORT}"'/g' \
-          -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
-          -e 's/''@APACHE_NON_SSL_IP@''/'"${REPL_APACHE_NON_SSL_IP}"'/g' \
-          -e 's/''@APACHE_NON_SSL_PORT@''/'"${REPL_APACHE_NON_SSL_PORT}"'/g' \
-          -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_NON_SSL}"'~g' \
-          -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_NON_SSL}"'~g' \
-    \
-          "${NGINX_NON_SSL_CONF_TEMPLATE}" \
-    > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+    # Check template existence before processing
+    if [ ! -f "${SELECTED_HTTP_TEMPLATE}" ]; then
+        echo "[ERROR] Selected template file '${SELECTED_HTTP_TEMPLATE}' does not exist! Aborting HTTP config generation." >&2
+    else
+	    # Generate HTTP (Non-SSL) Configuration
+        sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
+            -e 's/''@PUBLIC_NON_SSL_IP@''/'"${REPL_PUBLIC_NON_SSL_IP}"'/g' \
+            -e 's/''@PUBLIC_NON_SSL_PORT@''/'"${REPL_PUBLIC_NON_SSL_PORT}"'/g' \
+            -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
+            -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_NON_SSL}"'~g' \
+            -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_NON_SSL}"'~g' \
+            -e 's/''@APACHE_NON_SSL_IP@''/'"${REPL_APACHE_NON_SSL_IP}"'/g' \
+            -e 's/''@APACHE_NON_SSL_PORT@''/'"${REPL_APACHE_NON_SSL_PORT}"'/g' \
+            "${SELECTED_HTTP_TEMPLATE}" \
+            > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
 
-    sed -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_NON_SSL}"'~g' \
-          -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_NON_SSL}"'~g' \
-    \
-          "${NGINX_LOGROTATE_TEMPLATE_FILE}" \
-    > "${NGINX_LOGROTATE_CONFIG_FILE_NON_SSL}"
+        echo "[SUCCESS] Written HTTP config to ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+		
+		# Enable HTTP site symlink
+        ln -sf "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf" "${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+        echo "[SUCCESS] Created symlink in ${NGINX_SITES_ENABLED_DIRECTORY}/"
+    fi
 
-    # If SSL in enabled, add the SSL directive too
+    # Generate Logrotate Config for HTTP
+    if [ -f "${NGINX_LOGROTATE_TEMPLATE_FILE}" ]; then
+        sed -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_NON_SSL}"'~g' \
+            -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_NON_SSL}"'~g' \
+            "${NGINX_LOGROTATE_TEMPLATE_FILE}" \
+            > "${NGINX_LOGROTATE_CONFIG_FOLDER}/${VIRTUALSERVER_DOM}.nginx.conf"
+        echo "[SUCCESS] Created HTTP logrotate config."
+    fi
+
+    # Generate HTTPS (SSL) Configuration if enabled
     if [ "$IS_SSL" = "YES" ]; then
-
-        # Virtual server is an alias? Then use PARENT certs
-        if [ "$IS_ALIAS" = "YES" ]; then
-            ndomain_ssl_key=${PARENT_VIRTUALSERVER_SSL_KEY};
-            ndomain_nginx_chained_ssl_crt=${PARENT_VIRTUALSERVER_SSL_COMBINED};
-        else
-            # Otherwise it is a parent server or a sub-server
-            ndomain_ssl_key=${VIRTUALSERVER_SSL_KEY};
-            ndomain_nginx_chained_ssl_crt=${VIRTUALSERVER_SSL_COMBINED};
-        fi
-
-        # Configure nginx logs
+        echo "[INFO] Processing HTTPS configuration for ${VIRTUALSERVER_DOM}..."
         NGINX_ACCESS_LOG_FILE_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}.ssl_access_log"
         NGINX_ERROR_LOG_FILE_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}.ssl_error_log"
 
-        sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
-              -e 's/''@PUBLIC_SSL_IP@''/'"${REPL_PUBLIC_SSL_IP}"'/g' \
-              -e 's/''@PUBLIC_SSL_PORT@''/'"${REPL_PUBLIC_SSL_PORT}"'/g' \
-              -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
-              -e 's/''@SSL_PROTOCOLS@''/'"${REPL_SSL_PROTOCOLS}"'/g' \
-              -e 's/''@SSL_CIPHERS@''/'"${REPL_SSL_CIPHERS}"'/g' \
-              -e 's~''@SSL_CERTIFICATE@''~'"${ndomain_nginx_chained_ssl_crt}"'~g' \
-              -e 's~''@SSL_CERTIFICATE_KEY@''~'"${ndomain_ssl_key}"'~g' \
-              -e 's/''@APACHE_SSL_IP@''/'"${REPL_APACHE_SSL_IP}"'/g' \
-              -e 's/''@APACHE_SSL_PORT@''/'"${REPL_APACHE_SSL_PORT}"'/g' \
-              -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_SSL}"'~g' \
-              -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_SSL}"'~g' \
-        \
-              "${NGINX_SSL_CONF_TEMPLATE}" \
-        > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+        if [ ! -f "${NGINX_SSL_CONF_TEMPLATE}" ]; then
+            echo "[ERROR] SSL template file '${NGINX_SSL_CONF_TEMPLATE}' does not exist!" >&2
+        else
+            sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
+                -e 's/''@PUBLIC_SSL_IP@''/'"${REPL_PUBLIC_SSL_IP}"'/g' \
+                -e 's/''@PUBLIC_SSL_PORT@''/'"${REPL_PUBLIC_SSL_PORT}"'/g' \
+                -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
+                -e 's~''@SSL_CERTIFICATE@''~'"${ndomain_nginx_chained_ssl_crt}"'~g' \
+                -e 's~''@SSL_CERTIFICATE_KEY@''~'"${ndomain_ssl_key}"'~g' \
+                -e 's/''@APACHE_SSL_IP@''/'"${REPL_APACHE_SSL_IP}"'/g' \
+                -e 's/''@APACHE_SSL_PORT@''/'"${REPL_APACHE_SSL_PORT}"'/g' \
+                -e 's/''@APACHE_NON_SSL_IP@''/'"${REPL_APACHE_NON_SSL_IP}"'/g' \
+                -e 's/''@APACHE_NON_SSL_PORT@''/'"${REPL_APACHE_NON_SSL_PORT}"'/g' \
+                -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_SSL}"'~g' \
+                -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_SSL}"'~g' \
+                "${NGINX_SSL_CONF_TEMPLATE}" \
+                > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
 
-        sed -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_SSL}"'~g' \
-              -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_SSL}"'~g' \
-        \
-              "${NGINX_LOGROTATE_TEMPLATE_FILE}" \
-        > "${NGINX_LOGROTATE_CONFIG_FILE_SSL}"
+            echo "[SUCCESS] Written HTTPS config to ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
 
-    fi
-
-
-    # Make sure symlinks are always created in case of non-ssl
-    if [ ! -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ]; then
-        ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
-    fi
-
-    # Make sure symlinks are created when enabling ssl or deleted when it is disabled
-    if [ "$IS_SSL" = "YES" ]; then
-        if [ ! -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ]; then
-            ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
+			# Enable HTTPS site symlink
+            ln -sf "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf" "${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+            echo "[SUCCESS] Created SSL symlink in ${NGINX_SITES_ENABLED_DIRECTORY}/"
+			# Generate Logrotate Config for HTTPS
+            if [ -f "${NGINX_LOGROTATE_TEMPLATE_FILE}" ]; then
+                sed -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_SSL}"'~g' \
+                    -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_SSL}"'~g' \
+                    "${NGINX_LOGROTATE_TEMPLATE_FILE}" \
+                    > "${NGINX_LOGROTATE_CONFIG_FOLDER}/${VIRTUALSERVER_DOM}.ssl.nginx.conf"
+                echo "[SUCCESS] Created HTTPS logrotate config."
+            fi
         fi
     else
-        if [ -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ]; then
-            rm ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
-        fi
-        if [ -e ${NGINX_LOGROTATE_CONFIG_FILE_SSL} ]; then
-            rm ${NGINX_LOGROTATE_CONFIG_FILE_SSL}
-        fi
+        echo "[INFO] SSL disabled. Cleaning up any legacy SSL configs..."
+        rm -f "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+        rm -f "${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+        rm -f "${NGINX_LOGROTATE_CONFIG_FOLDER}/${VIRTUALSERVER_DOM}.ssl.nginx.conf"
     fi
-
 fi
 
 #
-# Delete the config file and the symlink if the entry is being deleted
+# ACTION: DELETE_DOMAIN
 #
 if [ "$VIRTUALSERVER_ACTION" = "DELETE_DOMAIN" ]; then
+    echo "[INFO] Deleting domain configuration for ${VIRTUALSERVER_DOM}..."
+    rm -f "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+    rm -f "${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+    rm -f "${NGINX_LOGROTATE_CONFIG_FOLDER}/${VIRTUALSERVER_DOM}.nginx.conf"
 
-    rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
-    if [ -e ${NGINX_LOGROTATE_CONFIG_FILE_NON_SSL} ]; then
-        rm ${NGINX_LOGROTATE_CONFIG_FILE_NON_SSL}
-    fi
-
-    if [ "$IS_SSL" = "YES" ]; then
-        rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
-        if [ -e ${NGINX_LOGROTATE_CONFIG_FILE_SSL} ]; then
-            rm ${NGINX_LOGROTATE_CONFIG_FILE_SSL}
-        fi
-    fi
-
+    rm -f "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+    rm -f "${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+    rm -f "${NGINX_LOGROTATE_CONFIG_FOLDER}/${VIRTUALSERVER_DOM}.ssl.nginx.conf"
+    echo "[SUCCESS] Domain config files removed."
 fi
 
-# Reload nginx
-# /etc/init.d/nginx reload
-service nginx reload && service nginx restart
+#
+# Safely Test & Reload Nginx
+#
+echo "[INFO] Testing Nginx configuration..."
+if nginx -t; then
+    echo "[SUCCESS] Nginx syntax OK. Reloading systemd unit..."
+    systemctl reload nginx
+    echo "[SUCCESS] Reload complete."
+else
+    echo "[ERROR] Nginx configuration test failed! Reload aborted." >&2
+fi
+
+echo "=== Hook completed at $(date) ==="
+echo ""

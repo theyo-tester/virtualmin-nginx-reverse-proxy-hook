@@ -1,10 +1,16 @@
 # Nginx Config Generator
 Virtualmin hook to set Nginx config when creating/editing/deleting a virtualserver.
+Useful if you want/need to make both servers, Apache & Nginx co-exist on the same server with Virtualmin.
+-   Nginx will use the front facing ports (f.i. 80/443, it will use the "Port for use in HTTP/HTTPS URLs") - auto-detected
+-   Apache is expected to sit on the web ports (f.i. 8080/8443)  - auto-detected 
+
 ## What is new in this fork:
 - Adapted and tested to work on Virtualmin version 8.2.0 GPL & Debian v12
 - Major refactoring and logging option in hook
 - It ensures that the Nginx log directory exists
 - Detection whether the force SSL-Redirect is enabled and apply it to nginx config files to (if you want to change this setting afterwards and apply it to nginx, change something in "Edit Virtual Server"-Page. For instance the Description-field)
+- http-01 ssl certification challenge is still working even if the force SSL-Redirect is enabled
+- If the auto-generated nginx config would cause nginx to stop working, it will not try to reload/restart nginx, thu savoiding down-time
 
 ## Requirements
 It only work with virtualservers created after installed a version of webmin-virtual-server >= 6.01.gpl-3.

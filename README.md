@@ -12,6 +12,7 @@ Useful if you want/need to make both servers, Apache & Nginx co-exist on the sam
 - Detection whether the force SSL-Redirect is enabled and apply it to nginx config files to (if you want to change this setting afterwards and apply it to nginx, change something in "Edit Virtual Server"-Page. For instance the Description-field)
 - http-01 ssl certification challenge is still working even if the force SSL-Redirect is enabled
 - If the auto-generated nginx config would cause nginx to stop working, it will not try to reload/restart nginx, thu savoiding down-time
+- BETA: co-existence of both features nginx & Apache. Apache can but is not required to act as the backend. An nginx-only virtual-server (generated over the native nginx feautre) should also be possible. The hook scripts will repair the port conflicts
 
 ## Requirements
 It only work with virtualservers created after installed a version of webmin-virtual-server >= 6.01.gpl-3.

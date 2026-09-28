@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+#######################################################################
+# Nginx Reverse Proxy / Port Conflict Pre-Hook for Virtualmin
+#######################################################################
+
+ENABLE_LOGGING=1
+LOG_FILE="/var/log/virtualmin-nginx-hook-debug.log"
+
+if [ "${ENABLE_LOGGING}" = "1" ] || [ "${ENABLE_LOGGING}" = "true" ]; then
+    exec >> "${LOG_FILE}" 2>&1
+else
+    exec > /dev/null 2>&1
+fi
+
+echo "======================================================================="
+echo "=== Pre-Hook called at $(date) ==="
+echo "======================================================================="
+echo "[INFO] Action: '${VIRTUALSERVER_ACTION}' | Domain: '${VIRTUALSERVER_DOM}'"
+
+
+# Resolve target states (NEWSERVER_* takes precedence during MODIFY_DOMAIN)
+TARGET_NGINX="${VIRTUALSERVER_NEWSERVER_VIRTUALMIN_NGINX:-${VIRTUALSERVER_VIRTUALMIN_NGINX:-0}}"
+TARGET_NGINX_SSL="${VIRTUALSERVER_NEWSERVER_VIRTUALMIN_NGINX_SSL:-${VIRTUALSERVER_VIRTUALMIN_NGINX_SSL:-0}}"
+
+echo "[INFO] Native Virtualmin Nginx Target State -> HTTP: '${TARGET_NGINX}' | SSL: '${TARGET_NGINX_SSL}'"
+
+# Detect active Apache service name
+APACHE_SVC=""
+if systemctl is-active --quiet apache2; then
+    APACHE_SVC="apache2"
+elif systemctl is-active --quiet httpd; then
+    APACHE_SVC="httpd"
+fi
+
+# Determine if Virtualmin native Nginx is active or scheduled to be enabled
+VIRTUALMIN_NATIVE_NGINX="NO"
+if [ "${TARGET_NGINX}" != "0" ] || [ "${TARGET_NGINX_SSL}" != "0" ]; then
+    VIRTUALMIN_NATIVE_NGINX="YES"
+fi
+
+# If native Nginx will be active and Apache is currently running, stop Apache to free ports 80/443
+if [ "${VIRTUALMIN_NATIVE_NGINX}" = "YES" ] && [ -n "${APACHE_SVC}" ]; then
+    echo "[INFO] Native Nginx will be enabled/active and ${APACHE_SVC} is running. Stopping ${APACHE_SVC} to prevent port binding conflicts..."
+    systemctl stop "${APACHE_SVC}"
+else
+    echo "[INFO] No pre-emptive Apache shutdown required."
+fi
+
+echo "=== Pre-Hook completed at $(date) ==="
+echo ""

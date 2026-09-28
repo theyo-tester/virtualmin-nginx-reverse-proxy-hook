@@ -2,7 +2,8 @@
 Virtualmin hook to set Nginx config when creating/editing/deleting a virtualserver.
 Useful if you want/need to make both servers, Apache & Nginx co-exist on the same server with Virtualmin.
 -   Nginx will use the front facing ports (f.i. 80/443, it will use the "Port for use in HTTP/HTTPS URLs") - auto-detected
--   Apache is expected to sit on the web ports (f.i. 8080/8443)  - auto-detected 
+-   Apache is expected to sit on the web ports (f.i. 8080/8443)  - auto-detected
+-   This setup requires to use Apache as enabled feature for that virtual server (do NOT enable the Nginx feature at the same time!)
 
 ## What is new in this fork:
 - Adapted and tested to work on Virtualmin version 8.2.0 GPL & Debian v12

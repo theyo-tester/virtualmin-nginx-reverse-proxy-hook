@@ -1,4 +1,4 @@
-# Nginx Config Generator
+# Virtualmin Nginx Config Generator
 Virtualmin hook to set Nginx config when creating/editing/deleting a virtualserver.
 Useful if you want/need to make both servers, Apache & Nginx co-exist on the same server with Virtualmin.
 -   Nginx will use the front facing ports (f.i. 80/443, it will use the "Port for use in HTTP/HTTPS URLs") - auto-detected
